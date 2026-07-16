@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>노 씨 라이트 - 실제 지하철 재현 3D 시뮬레이션</title>
+  <style>
+    :root{
+      --bg:#050608;
+      --panel:#11151c;
+      --text:#e8eef7;
+      --muted:#92a0b4;
+      --accent:#7dd3fc;
+      --good:#4ade80;
+      --warn:#f59e0b;
+      --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%;background:#040507;color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
+    #scene{position:fixed;inset:0;transition:transform .08s linear}
+    #scene.shake{animation:screenShake .12s linear infinite}
+    @keyframes screenShake{
+      0%{transform:translate(0,0) rotate(0deg)}
+      20%{transform:translate(-3px,1px) rotate(-0.15deg)}
+      40%{transform:translate(3px,-2px) rotate(0.15deg)}
+      60%{transform:translate(-2px,2px) rotate(-0.1deg)}
+      80%{transform:translate(2px,-1px) rotate(0.1deg)}
+      100%{transform:translate(0,0) rotate(0deg)}
+    }
+    #overlay{
+      position:absolute;left:14px;top:14px;width:min(430px, calc(100vw - 28px));
+      background:linear-gradient(180deg,rgba(17,21,28,.92),rgba(10,12,16,.88));
+      border:1px solid rgba(125,211,252,.14);
+      border-radius:18px;
+      box-shadow:0 18px 40px rgba(0,0,0,.35);
+      padding:16px;backdrop-filter: blur(8px);
+      z-index:10
+    }
+    h1,h2,p{margin:0 0 10px}
+    h1{font-size:20px;line-height:1.2}
+    h2{font-size:15px;color:#cfe7ff;margin-top:14px}
+    .small{color:var(--muted);font-size:13px;line-height:1.5}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+    .key{
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:12px;padding:10px 12px;background:rgba(255,255,255,.04);
+      font-size:13px;line-height:1.35
+    }
+    .key b{display:inline-block;min-width:36px;color:#fff}
+    .status{
+      padding:12px;border-radius:14px;background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.08);margin-top:10px
+    }
+    .meterWrap{margin-top:8px}
+    .meterLabel{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:6px}
+    .meter{
+      height:14px;border-radius:999px;background:#0a0d12;border:1px solid rgba(255,255,255,.08);overflow:hidden
+    }
+    .bar{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#f59e0b,#ef4444);border-radius:999px}
+    .bar.blue{background:linear-gradient(90deg,#60a5fa,#2563eb)}
+    #msg{
+      position:absolute;left:50%;bottom:22px;transform:translateX(-50%);
+      padding:12px 16px;border-radius:999px;background:rgba(0,0,0,.62);
+      border:1px solid rgba(255,255,255,.1);font-size:16px;font-weight:700;opacity:0;transition:.25s ease;
+      pointer-events:none;z-index:20
+    }
+    #msg.show{opacity:1}
+    #msg.good{color:var(--good)}
+    #msg.warn{color:var(--warn)}
+    #msg.danger{color:var(--danger)}
+    #endOverlay{
+      position:absolute;inset:0;background:rgba(0,0,0,.68);
+      display:none;align-items:center;justify-content:center;z-index:30;
+      backdrop-filter: blur(5px);
+    }
+    #endOverlay.show{display:flex}
+    #endCard{
+      width:min(520px, calc(100vw - 40px));
+      background:linear-gradient(180deg,rgba(20,28,38,.96),rgba(10,12,18,.96));
+      border:1px solid rgba(125,211,252,.18);
+      border-radius:24px;
+      box-shadow:0 24px 70px rgba(0,0,0,.5);
+      padding:28px;
+      text-align:center;
+    }
+    #endCard h3{margin:0 0 12px;font-size:30px;color:#dff6ff}
+    #endCard p{margin:0;color:#c5d2e4;line-height:1.6}
+  </style>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <div id="overlay">
+    <h1>노 씨 라이트</h1>
+    <p class="small">실제 지하철과 유사한 구조의 3D 시각장애인 문 찾기 시뮬레이션</p>
+
+    <div class="status">
+      <div><strong>목표</strong> 승강장의 사람들을 피해서 열린 지하철 문을 찾기</div>
+      <div id="doorInfo" class="small" style="margin-top:6px">문 방향 감지 중...</div>
+      <div class="small" id="lockInfo" style="margin-top:6px">화면을 클릭하면 시선 조작이 켜집니다. 다시 클릭하면 꺼집니다.</div>
+      <div class="small" id="obsInfo" style="margin-top:6px">장애물 근접: 없음</div>
+    </div>
+
+    <h2>조작 방법</h2>
+    <div class="controls">
+      <div class="key"><b>W</b>고개가 향한 방향으로 전진</div>
+      <div class="key"><b>S</b>후진</div>
+      <div class="key"><b>A</b>왼쪽으로 이동</div>
+      <div class="key"><b>D</b>오른쪽으로 이동</div>
+    </div>
+    <p class="small" style="margin-top:10px">시선이 켜진 상태에서 마우스를 움직이면 고개가 회전합니다.</p>
+
+    <h2>감각 피드백</h2>
+    <div class="meterWrap">
+      <div class="meterLabel"><span>문까지의 근접도</span><span id="proximityText">0%</span></div>
+      <div class="meter"><div id="proximityBar" class="bar"></div></div>
+    </div>
+    <div class="meterWrap">
+      <div class="meterLabel"><span>왼쪽 진동</span><span id="leftVibeText">0%</span></div>
+      <div class="meter"><div id="leftBar" class="bar blue"></div></div>
+    </div>
+    <div class="meterWrap">
+      <div class="meterLabel"><span>오른쪽 진동</span><span id="rightVibeText">0%</span></div>
+      <div class="meter"><div id="rightBar" class="bar blue"></div></div>
+    </div>
+  </div>
+
+  <div id="msg">메시지</div>
+  <div id="endOverlay">
+    <div id="endCard">
+      <h3>지하철 문을 찾았습니다</h3>
+      <p>문 위치를 성공적으로 확인했습니다.<br>시뮬레이션이 종료되었습니다.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script>
+    const sceneRoot = document.getElementById('scene');
+    const doorInfo = document.getElementById('doorInfo');
+    const obsInfo = document.getElementById('obsInfo');
+    const msg = document.getElementById('msg');
+    const lockInfo = document.getElementById('lockInfo');
+    const endOverlay = document.getElementById('endOverlay');
+    const proximityBar = document.getElementById('proximityBar');
+    const leftBar = document.getElementById('leftBar');
+    const rightBar = document.getElementById('rightBar');
+    const proximityText = document.getElementById('proximityText');
+    const leftVibeText = document.getElementById('leftVibeText');
+    const rightVibeText = document.getElementById('rightVibeText');
+
+    function showMsg(text, cls=''){
+      msg.textContent = text;
+      msg.className = cls ? `show ${cls}` : 'show';
+      clearTimeout(showMsg.t);
+      showMsg.t = setTimeout(()=>msg.className='', 1200);
+    }
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x07090d, 8, 42);
+
+    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 1.65, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    sceneRoot.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0x8aa6c8, 0.18));
+    const dirLight = new THREE.DirectionalLight(0xb6e0ff, 0.8);
+    dirLight.position.set(-3, 8, 5);
+    scene.add(dirLight);
+
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 30), new THREE.MeshStandardMaterial({ color:0x11151c, roughness:1 }));
+    floor.rotation.x = -Math.PI/2;
+    scene.add(floor);
+
+    const platform = new THREE.Mesh(new THREE.BoxGeometry(100, 0.12, 6), new THREE.MeshStandardMaterial({ color:0x0e1218, roughness:1 }));
+    platform.position.set(0, 0.06, 2.7);
+    scene.add(platform);
+
+    const safetyLine = new THREE.Mesh(new THREE.BoxGeometry(100, 0.03, 0.12), new THREE.MeshStandardMaterial({ color:0xffd56b, emissive:0x6b4a00, emissiveIntensity:0.35 }));
+    safetyLine.position.set(0, 0.12, 5.2);
+    scene.add(safetyLine);
+
+    const train = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(40, 4, 4.2), new THREE.MeshStandardMaterial({ color:0x273341, roughness:0.95 }));
+    body.position.set(0, 2, -1.7);
+    train.add(body);
+
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(40.2, 0.18, 4.24), new THREE.MeshStandardMaterial({ color:0x5cc8ff, emissive:0x16455c, emissiveIntensity:0.28 }));
+    stripe.position.set(0, 1.35, -1.69);
+    train.add(stripe);
+
+    const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(3.6, 4.0, 0.22), new THREE.MeshStandardMaterial({ color:0x16324a, roughness:0.6, emissive:0x0d2233, emissiveIntensity:0.2 }));
+    doorFrame.position.set(8, 2.0, -0.92);
+    train.add(doorFrame);
+
+    const doorLeft = new THREE.Mesh(new THREE.BoxGeometry(1.65, 3.3, 0.06), new THREE.MeshStandardMaterial({ color:0xd9f2ff, roughness:0.4, emissive:0x4cc9ff, emissiveIntensity:0.12 }));
+    doorLeft.position.set(7.2, 1.7, -0.78);
+    train.add(doorLeft);
+
+    const doorRight = doorLeft.clone();
+    doorRight.position.set(8.8, 1.7, -0.78);
+    train.add(doorRight);
+
+    const gap = new THREE.Mesh(new THREE.BoxGeometry(0.7, 3.1, 0.08), new THREE.MeshStandardMaterial({ color:0x020304, roughness:1 }));
+    gap.position.set(8, 1.6, -0.74);
+    train.add(gap);
+
+    const glow = new THREE.PointLight(0x9ddcff, 1.8, 12);
+    glow.position.set(8, 1.8, -0.15);
+    train.add(glow);
+    scene.add(train);
+
+    const doorPos = new THREE.Vector3(8, 1.65, -0.92);
+
+    const trainInterior = new THREE.Group();
+    const innerFloor = new THREE.Mesh(new THREE.BoxGeometry(30, 0.12, 4.0), new THREE.MeshStandardMaterial({ color:0x202a36, roughness:1 }));
+    innerFloor.position.set(20, 0.06, -1.7);
+    trainInterior.add(innerFloor);
+
+    const innerWall = new THREE.Mesh(new THREE.BoxGeometry(30, 3.6, 4.05), new THREE.MeshStandardMaterial({ color:0x1b2430, roughness:1, transparent:true, opacity:0.88 }));
+    innerWall.position.set(20, 1.9, -1.7);
+    trainInterior.add(innerWall);
+
+    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(30, 0.18, 4.05), new THREE.MeshStandardMaterial({ color:0xe9f7ff, roughness:0.9, emissive:0xcfefff, emissiveIntensity:0.08 }));
+    ceiling.position.set(20, 3.65, -1.7);
+    trainInterior.add(ceiling);
+
+    const innerLight = new THREE.PointLight(0xdff6ff, 2.2, 28);
+    innerLight.position.set(20, 2.35, -1.7);
+    trainInterior.add(innerLight);
+
+    for(let i=0;i<6;i++){
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.8, 0.6), new THREE.MeshStandardMaterial({ color:0x89b2d8, roughness:0.95 }));
+      seat.position.set(12.5 + i*2.2, 0.45, 1.0);
+      trainInterior.add(seat);
+      const seat2 = seat.clone();
+      seat2.position.z = -4.4;
+      trainInterior.add(seat2);
+    }
+
+    for(let i=0;i<7;i++){
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.0, 12), new THREE.MeshStandardMaterial({ color:0xffd56b, metalness:0.55, roughness:0.35 }));
+      pole.position.set(12 + i*2.5, 1.55, -1.7);
+      trainInterior.add(pole);
+    }
+
+    for(let i=0;i<5;i++){
+      const strap = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 8, 16), new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.8 }));
+      strap.position.set(13 + i*3.0, 2.85, -1.0);
+      trainInterior.add(strap);
+    }
+
+    trainInterior.visible = false;
+    scene.add(trainInterior);
+
+    function makePerson(color=0x6b7280){
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 1.0, 4, 8), new THREE.MeshStandardMaterial({ color, roughness:1 }));
+      body.position.y = 1.1;
+      g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.23, 12, 12), new THREE.MeshStandardMaterial({ color:0xf3d6c5, roughness:1 }));
+      head.position.y = 2.15;
+      g.add(head);
+      return g;
+    }
+
+    const obstacles = [];
+    const positions = [
+      [-6, 3.7, 1.5], [-2.5, 3.7, 0.8], [2.5, 3.7, 1.2], [6, 3.7, 2.0],
+      [-10, 3.7, 0.6], [10, 3.7, 1.0]
+    ];
+    positions.forEach((p, i) => {
+      const person = makePerson([0x64748b,0x7c8ea3,0x8a94a8,0x74808f,0x66707a,0x8191a5][i]);
+      person.position.set(p[0], 0, p[2]);
+      scene.add(person);
+      obstacles.push({ mesh: person, vx: i % 2 === 0 ? 0.008 : -0.008, range: [p[0]-2.5, p[0]+2.5], stopped: i % 3 === 0 });
+    });
+
+    const cane = new THREE.Group();
+    const caneShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 14), new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.25, metalness:0.08 }));
+    caneShaft.rotation.z = -0.42;
+    caneShaft.position.set(0.48, -0.72, -0.72);
+    cane.add(caneShaft);
+    camera.add(cane);
+    scene.add(camera);
+
+    const player = { x:0, z:8, yaw:Math.PI, pitch:0 };
+    const speed = 0.045, strafe = 0.038;
+    const bounds = { x: 45, z: 9.5 };
+    const keys = {};
+    let success = false;
+    let ended = false;
+    const mouse = { x:0, y:0 };
+    let pointerLocked = false;
+    let shakeTimer = 0;
+    let doorOpenProgress = 0;
+
+    addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+    addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    renderer.domElement.addEventListener('click', () => {
+      if (pointerLocked) document.exitPointerLock?.();
+      else renderer.domElement.requestPointerLock?.();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      pointerLocked = document.pointerLockElement === renderer.domElement;
+      lockInfo.textContent = pointerLocked ? '시선 조작 활성화됨. 다시 클릭하면 멈춥니다.' : '화면을 클릭하면 시선 조작이 켜집니다. 다시 클릭하면 꺼집니다.';
+    });
+
+    addEventListener('mousemove', e => {
+      if (!pointerLocked || ended) return;
+      mouse.x += e.movementX || 0;
+      mouse.y += e.movementY || 0;
+    });
+
+    function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+    function endSimulation(){
+      if (ended) return;
+      ended = true;
+      success = true;
+      endOverlay.classList.add('show');
+      document.exitPointerLock?.();
+      showMsg('지하철 문을 찾았습니다', 'good');
+    }
+
+    function animate(t){
+      if (!ended) {
+        player.yaw -= mouse.x * 0.0022;
+        player.pitch -= mouse.y * 0.0018;
+      }
+      mouse.x = 0; mouse.y = 0;
+      player.pitch = clamp(player.pitch, -0.85, 0.65);
+
+      const forwardX = -Math.sin(player.yaw);
+      const forwardZ = -Math.cos(player.yaw);
+      const rightX = Math.cos(player.yaw);
+      const rightZ = -Math.sin(player.yaw);
+
+      const distToDoor = Math.hypot(doorPos.x - player.x, doorPos.z - player.z);
+      const doorAligned = Math.abs(player.x - doorPos.x) < 1.2 && distToDoor < 2.2;
+
+      if (!ended) {
+        let moveX = 0, moveZ = 0;
+        if (keys['w'] || keys['arrowup']) { moveX += forwardX * speed; moveZ += forwardZ * speed; }
+        if (keys['s'] || keys['arrowdown']) { moveX -= forwardX * speed; moveZ -= forwardZ * speed; }
+        if (keys['a'] || keys['arrowleft']) { moveX -= rightX * strafe; moveZ -= rightZ * strafe; }
+        if (keys['d'] || keys['arrowright']) { moveX += rightX * strafe; moveZ += rightZ * strafe; }
+
+        if (doorOpenProgress > 0.7 && distToDoor < 1.8) {
+          moveX *= 0.25;
+          moveZ *= 0.7;
+          moveX += (doorPos.x - player.x) * 0.03;
+        }
+
+        player.x += moveX;
+        player.z += moveZ;
+
+        player.x = clamp(player.x, -bounds.x, bounds.x);
+        player.z = clamp(player.z, -bounds.z, bounds.z);
+
+        obstacles.forEach(o => {
+          if (o.stopped) return;
+          o.mesh.position.x += o.vx;
+          if (o.mesh.position.x < o.range[0] || o.mesh.position.x > o.range[1]) o.vx *= -1;
+        });
+
+        if (distToDoor < 3.5) doorOpenProgress = Math.min(1, doorOpenProgress + 0.05);
+        else doorOpenProgress = Math.max(0, doorOpenProgress - 0.01);
+
+        doorLeft.position.x = 7.2 - doorOpenProgress * 1.5;
+        doorRight.position.x = 8.8 + doorOpenProgress * 1.5;
+        gap.scale.x = 1 + doorOpenProgress * 2.5;
+        glow.intensity = 1.8 + doorOpenProgress * 2.4;
+        trainInterior.visible = doorOpenProgress > 0.12;
+
+        const insideView = doorOpenProgress > 0.8 && doorAligned && forwardZ < 0.25;
+        if (insideView) {
+          doorInfo.textContent = '지하철 문을 찾았습니다.';
+          showMsg('지하철 문을 찾았습니다', 'good');
+          endSimulation();
+        } else {
+          doorInfo.textContent = doorOpenProgress > 0 ? '문이 열리고 있습니다. 문으로 접근하세요.' : (doorAligned ? '문이 정면에 가깝습니다.' : '문 방향 감지 중...');
+        }
+
+        let obstacleNear = Infinity;
+        let collision = false;
+        obstacles.forEach(o => {
+          const od = Math.hypot(o.mesh.position.x - player.x, o.mesh.position.z - player.z);
+          obstacleNear = Math.min(obstacleNear, od);
+          if (od < 0.95) collision = true;
+        });
+
+        const proximity = clamp(1 - distToDoor / 10, 0, 1);
+        const vib = clamp(Math.abs((doorPos.x - player.x) / 4), 0, 1);
+        const left = player.x > doorPos.x ? vib : 0;
+        const right = player.x < doorPos.x ? vib : 0;
+
+        const caneShake = (left + right) * 0.22 + proximity * 0.08 + (obstacleNear < 2 ? 0.08 : 0);
+        const shakeX = Math.sin(t * 0.03) * caneShake * (player.x > doorPos.x ? -1 : 1);
+        const shakeY = Math.cos(t * 0.045) * caneShake * 0.7;
+        cane.rotation.z = -0.42 + shakeX * 0.75;
+        cane.rotation.x = shakeY * 0.28;
+        cane.position.set(0.48 + shakeX * 0.45, -0.72 + shakeY * 0.14, -0.72);
+
+        obsInfo.textContent = obstacleNear < 1.2 ? '장애물 근접: 매우 가까움' : obstacleNear < 2.2 ? '장애물 근접: 가까움' : '장애물 근접: 없음';
+
+        if (collision) {
+          shakeTimer = 18;
+          showMsg('사람과 충돌했습니다', 'danger');
+        }
+        if (shakeTimer > 0) shakeTimer--;
+        if (shakeTimer > 0) document.getElementById('scene').classList.add('shake');
+        else document.getElementById('scene').classList.remove('shake');
+
+        proximityBar.style.width = `${proximity * 100}%`;
+        leftBar.style.width = `${left * 100}%`;
+        rightBar.style.width = `${right * 100}%`;
+        proximityText.textContent = `${Math.round(proximity * 100)}%`;
+        leftVibeText.textContent = `${Math.round(left * 100)}%`;
+        rightVibeText.textContent = `${Math.round(right * 100)}%`;
+
+        if (left > 0.72) showMsg('왼쪽 진동이 강해집니다', 'warn');
+        if (right > 0.72) showMsg('오른쪽 진동이 강해집니다', 'warn');
+        if (obstacleNear < 1.0) showMsg('사람이 매우 가깝습니다', 'danger');
+        if (doorOpenProgress > 0.2 && doorOpenProgress < 1) showMsg('지하철 문이 열리는 중입니다', 'good');
+      }
+
+      camera.position.set(player.x, 1.65, player.z);
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = player.yaw;
+      camera.rotation.x = player.pitch;
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    showMsg('화면을 클릭한 뒤 탐색을 시작하세요', 'warn');
+    animate(0);
+  </script>
+</body>
+</html>
