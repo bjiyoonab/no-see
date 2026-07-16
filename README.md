@@ -23,7 +23,7 @@
 - 사람들과 부딪히면 어떻게 되는가?
 
 ## 배포 URL
-
+https://bjiyoonab.github.io/no-see/
 
 
 
